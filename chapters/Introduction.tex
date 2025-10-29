@@ -13,18 +13,47 @@
 
 \section{Context and Motivation}
 \label{sec:context}
-This is a dummy citation \cite{6651094}.
-And this is an example of using an acronym which was defined previously \ac{RDMA}.
-The long form of the acronym is only used the first time, the short form is \ac{RDMA}.
+\ac{MV}s are a common optimization in database systems: by precomputing and storing query results they can substantially accelerate read queries. However, materialized views introduce maintenance costs whenever base tables change, because the view contents must be kept consistent with the underlying data. The naive strategy of full recomputation can become prohibitively expensive for workloads with frequent updates.
 
-\blindtext
+Incrementally maintained materialized views (\ac{IMV}s) provide an alternative maintenance strategy by applying only the changes (deltas) caused by updates to base tables, instead of recomputing entire views. \ac{IMV}s can significantly reduce maintenance work for many workloads, but they are not a universal win: their benefit depends on workload characteristics. In particular, \ac{IMV}s tend to be most advantageous for read-heavy workloads with relatively small or structured updates, while write-heavy workloads can cause high incremental maintenance overhead and complex update propagation.
+
+Choosing between no views, conventional \ac{MV}s, and \ac{IMV}s therefore requires trading off read-performance gains against the cost of maintaining views under updates. Manually exploring this trade-off is time-consuming and error-prone. This thesis proposes to automate that decision by building a machine learning-based advisor that, given a SQL workload composed of reads and writes, recommends the view strategy that is likely to be optimal in terms of overall system performance and maintenance cost.
 
 \section{Problem Statement}
 \label{sec:problemStatment}
+The central problem addressed in this work is:
+
+\begin{quote}
+Given a SQL workload (a sequence or distribution of read and write statements) and information about the database/schema, determine whether the workload is best served by (i) no materialized views, (ii) materialized views with full recomputation, or (iii) incrementally maintained materialized views (\ac{IMV}s), taking into account both query performance and view maintenance costs.
+\end{quote}
+
+Concretely, this requires (a) modelling the costs and benefits of each strategy for a given workload, and (b) designing a predictor that maps workload characteristics to the recommended strategy. To support cost-aware decision making, this thesis includes the design of a write-cost estimation model inspired by decision-tree approaches (cf.\ the T3 system\cite{rieger2025t3}).
+
+This thesis answers the following research questions:
+
+\begin{enumerate}
+    \item When is it beneficial to use \ac{MV}, \ac{IMV}, or no materialized view at all for a given SQL workload?
+    \item Can a machine learning model accurately and efficiently predict the optimal view strategy for a workload based on its read and write characteristics?
+\end{enumerate}
 
 \section{Goals and Contributions}
 \label{sec:goals}
+The goals of this thesis are to design, implement, and evaluate an automated advisor that recommends one of the three view strategies (no view, \ac{MV}, or \ac{IMV}) for a given SQL workload. The primary contributions are:
+
+\begin{itemize}
+    \item The design of a machine learning-based advisor that takes workload features as input and outputs a recommended view strategy (no view / \ac{MV} / \ac{IMV}).
+    \item A cost estimation component for write operations that informs the advisor; this component leverages a decision-tree-based approach inspired by the T3 system\cite{rieger2025t3}.
+    \item An empirical evaluation demonstrating the advisor's effectiveness at selecting strategies that balance read performance and maintenance overhead across a variety of workloads.
+\end{itemize}
 
 \section{Thesis Outline}
 \label{sec:outline}
-Describe what the thesis contains
+The remainder of the thesis is organized as follows:
+
+\begin{itemize}
+    \item Chapter~\ref{chap:background} presents background material and related work on materialized views, incremental maintenance techniques, and workload-aware tuning approaches.
+    \item Chapter~\ref{chap:design} describes the design of the ML advisor, including the workload feature representation and the cost estimation model for writes.
+    \item Chapter~\ref{chap:implementation} details the implementation decisions and integration with the chosen database/testing infrastructure.
+    \item Chapter~\ref{chap:evaluation} reports the experimental methodology and results evaluating prediction accuracy and overall performance impact of the recommended strategies.
+    \item Chapter~\ref{chap:conclusion_futurework} concludes the thesis, summarizes findings, and outlines directions for future work.
+\end{itemize}

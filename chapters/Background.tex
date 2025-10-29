@@ -1,16 +1,44 @@
 \chapter{Background}
 \label{chap:background}
-In order to grant a better understanding of the subsequent chapters, this chapter is going to provide a background to the terms and concepts used in the thesis\dots
 
-\section{Remote Direct Memory Access (RDMA)}
-\label{sec:RDMA}
-\ac{RDMA} is an alternative to the traditional \ac{TCP/IP} network communication protocols. In short, \ac{RDMA} can provide access to a remote machine's memory without performing unnecessary intermediate copies of the memory while also bypassing the CPU of the remote machine.\\
-RDMA has been gaining traction in the academic community (Figure \ref{fig:rdmaHits}). This growing popularity is because \ac{RDMA} overcomes some limitations by \ac{TCP/IP}, and by doing so, helps to provide high bandwidth and low latency.
-Therefore, in order to explain \ac{RDMA}, the shortcomings of \ac{TCP/IP} socket programming is stated, and thus motivating the benefit of \ac{RDMA}.
+\section{Automated View Selection}
+\label{sec:related_work}
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.7\linewidth]{GoogleScholarRDMAHits.pdf}
-  \caption{Google Scholar hits of RDMA keyword}
-  \label{fig:rdmaHits}
-\end{figure}
+Automated database tuning, notably the selection and management of physical design structures such as \ac{MV}s and indexes, has long been a critical and challenging task for database administrators. Traditional approaches often rely on manual expertise \cite{yuan2020automatic} or on complex rule-based and enumeration-based heuristics, which become particularly cumbersome for rich \ac{MV} structures or complex queries \cite{ahmed2020automated}.
+
+Early automated \ac{MV} selection work explored heuristic systems that choose candidate views based on estimated cost and validate them against the actual database \cite{ahmed2020automated}. Commercial systems like Microsoft SQL Server's \ac{DTA} provide workload-driven recommendations for indexes and \ac{MV}s \cite{ahmed2020automated}. Other research formulates view selection as an optimization problem (for example, \ac{ILP}) \cite{yuan2020automatic}; while these formulations can be precise, they are often computationally expensive for large sets of subqueries or extensive workloads, and iterative methods may not guarantee convergence.
+
+More recently, \ac{ML} methods have been applied to a variety of database tasks with the goal of replacing handcrafted components by learned models that can automatically handle complexity and variability \cite{kossmann2022swirl, hilprecht2020learning}. A common paradigm in learned database components is workload-driven learning, which typically requires executing representative workloads on the target database to collect training data. Although effective in many settings, this data-collection step is costly and must often be repeated for each new database or substantially changed workload \cite{kossmann2022swirl}. To address this limitation, zero-shot learning approaches have emerged: models are pretrained once and designed to generalize to unseen databases or workloads without per-database retraining. Initial zero-shot work has focused on tasks such as cost estimation \cite{sun2019end}, and researchers are investigating extensions of this paradigm to tasks like \ac{MV} selection.
+
+The maintenance of \ac{MV}s - especially incremental maintenance - is another important axis in the literature. For example, commercial systems include refresh/maintenance modules that track refresh methods and schedules; some research and product directions explore using \ac{ML} to predict refresh behavior or maintenance cost and to incorporate those predictions into recommendation logic \cite{ahmed2020automated}. This line of work suggests that predicted maintenance cost (including incremental refresh cost) can and should influence which views are recommended. The interaction between specific maintenance strategies (e.g., incremental refresh) and \ac{ML}-based recommendation processes remains an active area where further research can provide valuable insights.
+
+\section{Query Performance Prediction Using Cost Models}
+\label{sec:query_performance_prediction}
+Accurate query performance prediction is essential for effective physical design tuning, including \ac{MV} selection. Traditional cost models, such as those used in query optimizers, estimate query execution time based on factors like I/O costs, CPU costs, and network costs \cite{selinger1979access}. However, these models often struggle to capture the complexities of modern database systems and workloads, leading to inaccuracies in performance predictions. The first cost model was proposed by Listgarten et al. \cite{listgarten1997cost} as part of their work on main memory databases. Moreover, a framework for building cost models for hierarchical database systems was introduced by Manegold et al.\cite{manegold2002generic}.
+
+In the last couple of decades, learning-based techniques have been increasingly applied to the problem of query performance prediction. Gupta et al. pioneered the use of machine learning for query performance prediction by introducing a decision tree-based approach to predict query execution time ranges\cite{gupta2008pqr}. Query performance prediction has also been approached for static and dynamic workloads using regression models \cite{akdere2012learning}, who implemented these techniques on top of PostgreSQL. Calibration of existing cost models in PostgreSQL has been explored by Wu et al. \cite{wu2013predicting}, where they used small calibration workloasds to adjust the cost model parameters. In combination with an analytical model, they were able to predict the query execution time for larger workloads\cite{wu2013towards}. This approach proved competitive to other contemporary learning-based methods.
+
+Neural networks and deep learning techniques have also been employed for query performance prediction through feeding the tree-structured query plans into neural network architectures. For instance, Sun et al. \cite{sun2019end} concluded that combining tree nodes is effectively handled using a pooling architecture. Zhou et al. proposed encoding single and multiple concurrent queries using a graph embedding approach \cite{zhou2020query}. This approach captures the interactions between concurrent queries and enables accurate predictions of execution times of whole workloads. Additionally, transformer-based architectures and augmenting the input data with database statistics have been shown to further improve prediction accuracy \cite{zhao2022queryformer}.
+
+Since workload-based models do not work well in zero-shot settings, recent research has focused on developing zero-shot query performance prediction models. The first zero-shot query performance prediction model was proposed by Hilprecht et al. \cite{hilprecht2022zero}. Their zero-shot model was trained and evaluated on different databases and workloads, demonstrating the ability to generalize to unseen databases without retraining. More recently, Wu et al. \cite{wu2024stage} introduced a zero-shot model that is trained on the complete Redshift workload. They propose a hierarchical model in an effort to improve latency.
+
+Learning-based approaches have shown promising results in query performance prediction, but they are often criticized in literature for their high end-to-end latency. This latency can be a significant drawback in scenarios where quick predictions are essential for decision-making. Lehmann et al. \cite{lehmann2023your} commented on this issue by concluding that learning-based query optimizers have high optimization times, which renders them impractical for real-world usage. One approach to mitigate this issue is proposed by Wu et al. \cite{wu2024stage}, where they use a query cache with a fallback to a local decision tree model to reduce the end-to-end latency of their zero-shot model.
+
+Other non-learning-based approaches have been proposed to solve the query performance prediction problem. Since these approaches are not dependent on neural networks, they can be more interpretable and can be quicker to train and evaluate. For instance, cost models based on differential programming have been proposed by Hilprecht et al. \cite{hilprecht2020dbms}. They depend on learning some of the constants in pre-existing cost model functions. Another approach is to use different groups of calibration constants for the fixed cost functions in the PostgreSQL cost model \cite{yang2023rethinking}. 
+
+% TODO: write about t3 here and how low-latency it is
+\subsection{Tuple Time Tree (T3) Cost Model}
+Rieger et al. proposed the \ac{T3} cost model \cite{rieger2025t3}, which bridges the gap between high-accuracy, high-latency learning-based models and their lower-accuracy, low-latency counterparts. \ac{T3} is a hybrid cost model that combines a low-latency decision tree with pipeline-based query plan presentation and tuple-centric prediction targets.
+
+The pipeline-based query plan representation divides the query plan into multiple pipelines, where each pipeline consists of a sequence of operators that can be executed without materializing intermediate results. This representation allows \ac{T3} to generate a flat feature vector for each pipeline and predicts its execution time individually. The total query execution time is calculated as the sum of all pipeline predictions.
+
+On the other hand, tuple-centric prediction is based on the idea that, instead of predicting the total execution time for a pipeline, \ac{T3} predicts the expected time it takes to process a single tuple within that pipeline. Then, the per-tuple time is multiplied by the pipeline's input cardinality to estimate the total execution time of the pipeline. This approach is highly compatible with the decision tree architecture and is highly-scalable.
+
+Furthermore, \ac{T3} improves inference time by compiling the trained model directly into native machine code using the \texttt{lleaves} framework. This step drastically reduces the average prediction latency from 22µs in interpreted trees and 1ms in zero-shot neural networks down to 4 microseconds.
+
+\section{Workload Generation}
+\label{sec:workload_generation}
+In this work, we require a diverse set of training and evaluation workloads to train and assess our proposed models. Workload generation is a well-researched area, with various methods proposed to create synthetic workloads that mimic real-world query patterns. For example, Kipf et al. \cite{kipf2018learned} introduced a method for generating synthetic SQL queries based on schema information and sampling values from the underlying data. Hilprecht et al. \cite{hilprecht2022zero} built on this approach by enabling the generation of more complex queries that might include joins, random index creation and predicates with null comparison, regex-based string comparison and disjunctions.
+
+
+% (The thesis positions itself in this context by building an ML-based advisor that explicitly reasons about the trade-off between read performance and maintenance cost when recommending no view / MV / IMV.)
