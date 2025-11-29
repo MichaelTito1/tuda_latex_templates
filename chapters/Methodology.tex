@@ -1,0 +1,131 @@
+\chapter{Methodology}
+\label{chap:methodology}
+\IMRADlabel{methods}
+
+This chapter details the methodology used to build the \ac{ML}-based zero-shot view advisor. The primary objective is to create an advisor that can predict the optimal view strategy (no view, \ac{MV}, or \ac{IMV}) for a given SQL workload using execution time predictions of SELECT and \ac{DML} execution plans from specialized \ac{T3} cost models. This is achieved by first curating a comprehensive training dataset by executing workloads and capturing their performance, then using this dataset to train a predictive cost model. The trained model is then integrated into a view advisor framework that analyzes workloads and recommends the best view configuration based on predicted costs and benefits.
+
+\section{Training Data Curation}
+\label{sec:data_curation}
+The foundation of the \ac{ML} advisor is a labeled dataset of query execution times. This dataset must capture performance metrics for both SELECT and \ac{DML} statements in the \ac{IMV} configuration. The phases mentioned below are repeated for 19 out of the 20 databases in the Amazon Redshift dataset \cite{gupta2015amazon}, with the IMDB database being excluded to be used in evaluating the zero-shot model.
+
+\subsection{Dataset and Workload Generation}
+\label{sec:dataset_generation}
+To build a robust model, we require a diverse set of training and evaluation workloads. We generate synthetic workloads that mimic the characteristics of real-world scenarios, such as the query distributions and read/write mixes found in datasets like the Amazon Redshift workload \cite{gupta2015amazon}.
+
+The data generation involves generating synthetic \texttt{SELECT} queries (read workload) using the parameters in Table~\ref{tab:workload_params}. Additionally, we generate synthetic \ac{DML} statements (write workload) from a curated month-long snippet of the Amazon Redshift dataset using Stemmer's workload generator \cite{Stemmer2025}. Both synthetic workloads' statements are verified syntactically. The workloads are also normalized by cleaning any database sharding suffixes in table names. Following that, we generate matches between the the cleaned read and write workloads. The generated matches are divided into tiny workloads (also called "experiments") that consist of one SELECT statement and its corresponding \ac{DML} queries. The structure of a single experiment is illustrated in Figure~\ref{fig:experiment_diagram}, while the overall workload structure is shown in Figure~\ref{fig:workload_diagram}. 
+
+% single experiment diagram
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{single-experiment.jpg}
+    \caption{Structure of a Single Experiment in the Workload}
+    \label{fig:experiment_diagram}
+\end{figure}
+
+The matching between SELECT and \ac{DML} queries is based on common base tables they operate on. In each experiment, the maximum number of queries is capped at 1 SELECT and 20 \ac{DML} queries. The total number of queries in all generated experiments is capped at 100,000 queries. This is to ensure manageable execution times while still capturing sufficient variability.
+
+% entire workload diagram
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{experiment-workload.jpg}
+    \caption{Structure of the Entire Workload Composed of Multiple Experiments}
+    \label{fig:workload_diagram}
+\end{figure}
+
+\subsection{Experiment Data Collection}
+\label{sec:data_collection}
+For each defined "experiment" workload, we execute the workload on the target database system under controlled conditions. This instrumentation is critical for capturing the ground-truth performance data.
+
+Preparing the execution environment involves loading the schema and data, the creation of necessary indexes and loading of the necessary extensions--most importantly, the \texttt{pg\_ivm} extension for \ac{IMV} support. Staging tables are used to restore the database state between experiments to ensure consistency. The base tables are loaded as a 10\% sample of the staging tables before each experiment execution. This is to ensure that the \ac{DML} queries have data to operate on while avoiding conflicts with existing table rows. To avoid any cold start scenarios, the database is warmed up before execution. Each experiment is executed only in the \ac{IMV} configuration to capture the relevant performance metrics for both reads and writes.
+
+Each experiment execution consists of the following steps:
+\begin{enumerate}
+    \item \textbf{Create the \ac{IMV} for the read query:} For the read query in the experiment, we create an \ac{IMV}. This sets up the necessary triggers and structures for incremental maintenance.
+    \item \textbf{Execute write queries and measure execution time:} Each \ac{DML} query in the experiment is executed, and its execution time is measured. This captures the "trigger time overhead," which is the \emph{view maintenance cost} incurred by the \ac{IMV} triggers during writes.
+\end{enumerate}
+
+This process produces a labeled dataset where each entry includes the query, its \ac{QEP}, the view configuration, the measured execution time for the \ac{DML} queries and the automatically executed \ac{IMV} triggers mentioned in ~\ref{subsec:pg_ivm_impl}.
+
+Note that the obtained trigger execution times only measure the "wall clock" time spent executing the specific SQL statements inside the triggers. They do not include any overhead from context switching, transaction management, or other database system activities outside the trigger execution itself. The total time spent on view maintenance (including overheads) is captured in the \ac{DML} total execution time of the \ac{IVM} triggers. This distinction is important for accurately training the cost model to predict the actual maintenance overhead.
+
+\subsection{Feature Extraction from Execution Plans}
+\label{sec:feature_extraction}
+Once the raw performance data is collected, the next step is to parse the \ac{QEP}s into numerical feature vectors. While the read-cost model utilizes the standard pipeline-centric feature extraction of the \ac{T3} system \cite{rieger2025t3}, the view refresh cost model requires a specialized approach to capture the overhead of \ac{IVM}.
+
+For the view refresh cost model, we extract a composite feature vector that combines two distinct sources of information:
+\begin{itemize}
+    \item \textbf{Delta Features:} Extracted from the \ac{IVM} trigger maintenance plans, characterizing the volume of changes (e.g., number of rows inserted/deleted, trigger execution cost).
+    \item \textbf{Context Features:} Extracted from the view definition's \ac{QEP}, characterizing the static complexity of the view (e.g., total cardinality, number of joins, total operators).
+    \item \textbf{Interaction Features:} Scale-invariant ratios (e.g., $\frac{\text{delta rows}}{\text{view cardinality}}$) that model the relative change and allow the model to generalize across databases of varying sizes.
+\end{itemize}
+
+Prior to training, a featurized dataset is constructed by combining these feature vectors with their corresponding measured execution times. Outliers are clipped, and rows with zero execution time (indicating no actual maintenance work) are filtered out to ensure the model learns the true cost of maintenance.
+
+\section{Model Training}
+\label{sec:model_training}
+With the featurized dataset, we can train the cost models. While a pre-existing read-cost model is reused, the development of a novel \emph{view refresh cost model} to predict the \ac{IMV} maintenance overhead, which is an integral part of the view advisor.
+
+\subsection{Training the T3-style Cost Model}
+\label{sec:t3_training}
+We implement the view refresh cost model as a LightGBM gradient-boosted decision-tree ensemble, an approach inspired by the \ac{T3} cost model \cite{rieger2025t3}.
+The feature vectors extracted from the parsed trigger execution plans serve as the input ($X$) for this model. More specifically, for each \ac{DML} \ac{QEP}, the model is served the following data:
+\begin{itemize}
+    \item The full set of pipeline features of the view's underlying query, extracted from the \ac{QEP} of the view query itself.
+    \item A subset of pipeline features extracted from the \ac{QEP} of the delta computation trigger associated with the \ac{IMV}.
+    \item The full set of pipeline features from the \ac{QEP} of the delta apply trigger associated with the \ac{IMV}.
+\end{itemize}
+
+The training pipeline was adapted to handle the specific feature subset generated from these maintenance plans augmented by contextual information from the views query plans, ensuring the model learns the costs associated with incremental updates rather than general query execution.
+
+\subsection{Per-Pipeline Prediction Target}
+\label{sec:per_tuple_training}
+A key innovation of the \ac{T3} model, which we adopt, is its training objective. Instead of predicting the total execution time of an entire pipeline, the \ac{QEP} is divided into pipelines, then the model is trained to predict the \textbf{per-pipeline processing time} ($t$) for each pipeline. This per-pipeline time is defined as the total time spent processing tuples in that pipeline divided by the number of tuples processed (the pipeline's cardinality). This approach allows the model to generalize better across pipelines of varying sizes and complexities. 
+
+Additionally, we train the model to minimize the mean squared error on the log-transformed per-pipeline times, which helps to handle the wide range of time values and focuses the model on relative error. To stabilize training across the wide dynamic range of per-pipeline times (which can be fractions of a nanosecond), we transform the target variable $t$ using a negative log transformation, as described in the \ac{T3} design:
+\[
+t' = -\log(t)
+\]
+The model is then trained to predict this transformed value $t'$. At inference time, we reverse the transformation and multiply by the pipeline's cardinality to get the final predicted pipeline cost. This per-pipeline model is the core component that allows the advisor to estimate the \ac{IMV} maintenance cost for any given \ac{DML} statement.
+
+
+\subsection{View Advisor Setup}
+\label{sec:view_advisor_setup}
+
+The trained view refresh cost model is a key component of a larger view advisor system. The advisor is designed to recommend one of the following view configurations: \acp{IMV}, \acp{MV} or no view at all. The view advisor input is the estimate \ac{QEP}s of a workload in each of the three view configurations. In case of \ac{IMV} and \ac{MV}, each estimate \ac{QEP} of a \texttt{SELECT} statement contains the potential view estimated to be used. The advisor operates by estimating the effect of different view configurations on a given workload.
+
+The setup of the view advisor involves the following steps:
+\begin{enumerate}
+    \item \textbf{Workload Analysis:} The advisor takes the estimate \ac{QEP}s of a given workload as input. This workload consists of a mix of read (\texttt{SELECT}) and \ac{DML} queries. The estimate \ac{QEP}s are generated for three configurations: no view, \ac{MV}, and \ac{IMV}.
+    \item \textbf{View Definitions:} A set of candidate views are created in the database beforehand by the user.
+    \item \textbf{Cost-Benefit Analysis:} For each candidate view, the advisor performs a cost-benefit analysis.
+    \begin{itemize}
+        \item \textbf{Benefit:} The benefit is the estimated reduction in read query execution time. This is calculated by rewriting the workload queries to use the views and estimating the cost of the rewritten queries using a read-cost model.
+        \item \textbf{Cost:} The cost is the estimated overhead of maintaining the views. This is where our T3 view refresh cost model is used. For each \ac{DML} query in the workload that affects a base table of the candidate view, the model predicts the maintenance cost.
+        \item \textbf{Total Score:} The total score for each view is computed as:
+        \[
+        \text{Total Score} = \text{Total Read Time with View} + \text{Total View Maintenance Cost}
+        \]
+        The advisor sums the predicted read times (using the read-cost model) and the predicted view maintenance costs (using the view refresh cost model) to get the total score for each view configuration.
+
+    \end{itemize}
+    \item \textbf{View Selection:} Based on the cost-benefit analysis, the advisor provides the following recommendations:
+    \begin{itemize}
+        \item \textbf{Localized recommendations}: for each group of queries that share the same base table(s) as a candidate view, the advisor recommends whether to use the view (as \ac{MV} or \ac{IMV}) or not, based on which option yields the lowest total score.
+        \item \textbf{Global recommendation}: the advisor also provides a global recommendation across the entire workload, selecting the view configuration (no view, \ac{MV}, or \ac{IMV}) that minimizes the overall total score. 
+    \end{itemize}
+    This is typically formulated as an optimization problem, where the goal is to maximize the total benefit under a constraint on the total maintenance cost (a "maintenance budget").
+\end{enumerate}
+
+% view advisor flow
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{view-advisor-flow.jpg}
+    \caption{View Advisor Cost-Benefit Analysis Flow}
+    \label{fig:view_advisor_flow}
+\end{figure}
+
+This setup allows the advisor to make informed decisions about view usage based on predicted performance impacts, leveraging the trained view refresh cost model to accurately estimate the overhead of \ac{IMV} maintenance.
+
+\section{Summary}
+\label{sec:methodology_summary}
+This chapter outlined the comprehensive methodology for developing an \ac{ML}-based zero-shot view advisor. The process began with the careful curation of a labeled dataset through controlled execution of synthetic workloads, capturing both read and write performance metrics in the \ac{IMV} configuration. Feature extraction techniques were employed to transform \ac{QEP}s into numerical representations suitable for model training. The core of the methodology involved training a novel T3-style view refresh cost model to predict \ac{IMV} maintenance overhead. Finally, the trained model was integrated into a view advisor framework capable of recommending optimal view strategies based on cost-benefit analyses. This structured approach ensures that the advisor is grounded in empirical performance data and leverages advanced machine learning techniques to make informed recommendations.

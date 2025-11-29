@@ -7,3 +7,17 @@ To evaluate the performance and usefulness of\dots
 \section{Experimental setup}
 \label{sec:experimentalSetup}
 \blindtext
+% refer to the tables in the appendix
+% refer to the IMDB view queries in the appendix
+% mention query rewrites
+
+
+
+% bel balady kda:
+% 0. create MVs using the curated view definitions. Erase and repeat for IMVs
+% 1. rewrite workload to use view definitions
+% 2. Estimate workload QEPs in all 3 configurations (no view, MV, IMV). The QEPs will use the created views where applicable.
+% 3. For each view definition, group its read and DML queries from the workload and compute the score = sum(predicted read time) + sum(predicted refresh time). The predicted refresh time is 0 in case of no view.
+% 4. for each view definition, we now have a score. select the view definition with the lowest score.
+% during evaluation, we discovered that we cannot get estimate IVM trigger plans using EXPLAIN. So, we execute the DML queries with the IVM triggers created and capture the actual execution time. We then use the T3 DML cost model to predict the IVM trigger time and compare it to the actual time.
+

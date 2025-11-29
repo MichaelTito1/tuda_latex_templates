@@ -8,7 +8,7 @@ Automated database tuning, notably the selection and management of physical desi
 
 Early automated \ac{MV} selection work explored heuristic systems that choose candidate views based on estimated cost and validate them against the actual database \cite{ahmed2020automated}. Commercial systems like Microsoft SQL Server's \ac{DTA} provide workload-driven recommendations for indexes and \ac{MV}s \cite{ahmed2020automated}. Other research formulates view selection as an optimization problem (for example, \ac{ILP}) \cite{yuan2020automatic}; while these formulations can be precise, they are often computationally expensive for large sets of subqueries or extensive workloads, and iterative methods may not guarantee convergence.
 
-More recently, \ac{ML} methods have been applied to a variety of database tasks with the goal of replacing handcrafted components by learned models that can automatically handle complexity and variability \cite{kossmann2022swirl, hilprecht2020learning}. A common paradigm in learned database components is workload-driven learning, which typically requires executing representative workloads on the target database to collect training data. Although effective in many settings, this data-collection step is costly and must often be repeated for each new database or substantially changed workload \cite{kossmann2022swirl}. To address this limitation, zero-shot learning approaches have emerged: models are pretrained once and designed to generalize to unseen databases or workloads without per-database retraining. Initial zero-shot work has focused on tasks such as cost estimation \cite{sun2019end}, and researchers are investigating extensions of this paradigm to tasks like \ac{MV} selection.
+More recently, \ac{ML} methods have been applied to a variety of database tasks with the goal of replacing handcrafted components by learned models that can automatically handle complexity and variability \cite{hilprecht2020learning, kossmann2022swirl}. A common paradigm in learned database components is workload-driven learning, which typically requires executing representative workloads on the target database to collect training data. Although effective in many settings, this data-collection step is costly and must often be repeated for each new database or substantially changed workload \cite{kossmann2022swirl}. To address this limitation, zero-shot learning approaches have emerged: models are pretrained once and designed to generalize to unseen databases or workloads without per-database retraining. Initial zero-shot work has focused on tasks such as cost estimation \cite{sun2019end}, and researchers are investigating extensions of this paradigm to tasks like \ac{MV} selection.
 
 The maintenance of \ac{MV}s - especially incremental maintenance - is another important axis in the literature. For example, commercial systems include refresh/maintenance modules that track refresh methods and schedules; some research and product directions explore using \ac{ML} to predict refresh behavior or maintenance cost and to incorporate those predictions into recommendation logic \cite{ahmed2020automated}. This line of work suggests that predicted maintenance cost (including incremental refresh cost) can and should influence which views are recommended. The interaction between specific maintenance strategies (e.g., incremental refresh) and \ac{ML}-based recommendation processes remains an active area where further research can provide valuable insights.
 
@@ -61,11 +61,18 @@ For aggregations, \ac{IVM} typically employs a counting algorithm \cite{gupta199
 \label{subsec:pg_ivm_impl}
 Standard PostgreSQL does not support \ac{IVM} natively; it requires extensions or manual trigger-based setups. The \texttt{pg\_ivm} extension \cite{pgivm} is a state-of-the-art solution that brings \ac{IVM} capabilities to PostgreSQL. Unlike asynchronous approaches that might use logs to defer updates, \texttt{pg\_ivm} implements immediate maintenance, where the view is updated synchronously within the same transaction that modifies the base table.
 
-\texttt{pg\_ivm} operates by automatically generating and attaching triggers to the base tables involved in the \ac{MV} definition. When a \ac{DML} operation occurs, two trigger operations are executed:
+\texttt{pg\_ivm} operates by automatically generating and attaching triggers to the base tables involved in the \ac{MV} definition. When a \ac{DML} operation occurs, two trigger operations are executed, as illustrated in Figure \ref{fig:pg_ivm_triggers}:
 \begin{enumerate}
     \item \textbf{Delta Calculation}: The triggers capture the transition tuples (old and new values) and compute the corresponding delta for the view using the differential update logic described in Section \ref{subsec:ivm_theory}. The computed $\Delta V$ is stored in temporary structures local to the \ac{DML} transaction.
     \item \textbf{View Update}: The changes calculated by the first trigger are applied to the materialized view to keep it consistent with the base tables.
 \end{enumerate}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{imv-diagram.jpg}
+    \caption{pg\_ivm Trigger Mechanism for Incremental View Maintenance}
+    \label{fig:pg_ivm_triggers}
+\end{figure}
 
 To support general SQL queries including joins and aggregations without requiring unique keys on all projected columns, \texttt{pg\_ivm} maintains the view using "counting" logic similar to the classic Counting Algorithm. This ensures that views correctly reflect the underlying data multiplicity, particularly for `SUM` and `COUNT` aggregates.
 
