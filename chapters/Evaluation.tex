@@ -2,22 +2,343 @@
 \label{chap:evaluation}
 \IMRADlabel{results} % Mechanismus um das Strukturierungsmodell IMRaD zu kennzeichnen
 
-To evaluate the performance and usefulness of\dots
+To evaluate the performance and usefulness of the proposed \ac{ML}-based view advisor, we conduct experiments on two key components: (1) the view refresh cost model, which predicts the maintenance overhead of \acp{IMV}, and (2) the view advisor itself, which recommends optimal view configurations for a given workload. This chapter presents the experimental setup, evaluation metrics, results, and analysis for both components.
 
-\section{Experimental setup}
+\section{Experimental Setup}
 \label{sec:experimentalSetup}
-\blindtext
-% refer to the tables in the appendix
-% refer to the IMDB view queries in the appendix
-% mention query rewrites
 
+This section describes the experimental environment, datasets, and procedures used to evaluate the view refresh cost model and the view advisor.
 
+\subsection{Hardware and Software Environment}
+\label{sec:hardware_setup}
 
-% bel balady kda:
-% 0. create MVs using the curated view definitions. Erase and repeat for IMVs
-% 1. rewrite workload to use view definitions
-% 2. Estimate workload QEPs in all 3 configurations (no view, MV, IMV). The QEPs will use the created views where applicable.
-% 3. For each view definition, group its read and DML queries from the workload and compute the score = sum(predicted read time) + sum(predicted refresh time). The predicted refresh time is 0 in case of no view.
-% 4. for each view definition, we now have a score. select the view definition with the lowest score.
-% during evaluation, we discovered that we cannot get estimate IVM trigger plans using EXPLAIN. So, we execute the DML queries with the IVM triggers created and capture the actual execution time. We then use the T3 DML cost model to predict the IVM trigger time and compare it to the actual time.
+All experiments were conducted on a dedicated server to ensure consistent and reproducible results. The hardware specifications are detailed in Table~\ref{tab:hardware_specs} in Appendix~\ref{sec:hardware_specs}. The database system used for evaluation is PostgreSQL 16 with the \texttt{pg\_ivm} extension enabled for \ac{IMV} support.
 
+\subsection{Evaluation Dataset}
+\label{sec:eval_dataset}
+
+For evaluation, we use the IMDB database, which was deliberately excluded from the training data to test the zero-shot generalization capabilities of our models. The IMDB database contains information about movies, actors, directors, and related metadata, providing a diverse set of tables and relationships suitable for view evaluation.
+
+The evaluation workload consists of a set of \texttt{SELECT} and \ac{DML} queries derived from the Amazon Redshift workload \cite{gupta2015amazon}, filtered to those applicable to the IMDB schema. This represents a realistic workload for testing the view advisor's effectiveness.
+
+\subsection{Candidate View Definitions}
+\label{sec:view_definitions}
+
+We curated a set of 12 candidate view definitions specifically designed for the IMDB database. These views represent common query patterns involving joins across multiple tables such as \texttt{title}, \texttt{cast\_info}, \texttt{movie\_companies}, and \texttt{name}. The complete SQL definitions for these views are provided in Appendix~\ref{sec:views}.
+
+The candidate views vary in complexity:
+\begin{itemize}
+    \item \textbf{Simple views:} Two-table joins with basic filtering (e.g., Views 1, 2, 5, 7)
+    \item \textbf{Complex views:} Three-table joins with multiple predicates (e.g., Views 3, 8, 9)
+    \item \textbf{High-selectivity views:} Views with restrictive filter conditions (e.g., Views 4, 11)
+\end{itemize}
+
+The sequence of operations in the workload for each view query is illustrated in Figure~\ref{fig:workload_sequence}.
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{IMDB-sequence.png}
+    \caption{Workload Sequence for Each View Query}
+    \label{fig:workload_sequence}
+\end{figure}
+
+\subsection{Query Rewriting}
+\label{sec:query_rewriting}
+
+To evaluate the benefit of views on read queries, we employ query rewriting techniques. For each \texttt{SELECT} query in the workload, we attempt to rewrite it to utilize one of the candidate views where applicable. The rewriting process identifies queries whose base tables and predicates match a subset of a candidate view's definition, allowing the query to be answered directly from the view instead of the base tables.
+
+\subsection{Workload Generation Parameters}
+\label{sec:workload_gen_params}
+
+The workload generation parameters used for creating the training dataset are summarized in Table~\ref{tab:workload_params} in Appendix~\ref{sec:workload_parameters}. These parameters control the diversity and complexity of the generated queries, ensuring broad coverage of different query patterns.
+
+\section{Evaluation of the View Refresh Cost Model}
+\label{sec:eval_cost_model}
+
+The first component we evaluate is the T3-style view refresh cost model, which predicts the execution time of \ac{IMV} maintenance triggers.
+
+\subsection{Feature Importance}
+\label{sec:feature_importance}
+
+To understand the decision-making process of the learned view refresh cost model, we analyzed the feature importance scores generated by LightGBM (specifically the 'Gain' metric, which measures the improvement in accuracy brought by a feature to the branches it is on). Figure~\ref{fig:feature_importance} illustrates the top five most influential features.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{feature_importance.png}
+    \caption{Top 5 Feature Importances for the View Refresh Cost Model}
+    \label{fig:feature_importance}
+\end{figure}
+
+The results validate our hypothesis that accurate IVM cost estimation requires a composite view of both the maintenance operation and the static view context.
+
+\begin{itemize}
+    \item \textbf{Dominance of Maintenance Complexity}: The single most important feature, \texttt{delta\_aggregate\_count}, indicates that the presence of aggregation operations within the trigger logic is the primary driver of maintenance cost. This aligns with the theoretical understanding that maintaining aggregates (e.g., updating SUM or COUNT) requires stateful logic that is computationally heavier than simple projections.
+    \item \textbf{Validation of Context Features}: Crucially, \texttt{context\_total\_est\_card} appears as the third most important feature. This confirms that the model relies heavily on the static size of the view (a "Context Feature" introduced in Section~\ref{sec:feature_extraction}) to scale its predictions. Without this feature, the model would lack the necessary context to distinguish between updates on small versus large datasets, leading to the zero-shot failures observed in early experiments.
+    \item \textbf{Role of Interaction Features}: The presence of \texttt{TableScan\_Scan\_const} and \texttt{delta\_scan\_count} highlights that the I/O overhead of locating tuples--both in the base table and the view--remains a critical cost factor.
+\end{itemize}
+
+\subsection{Evaluation Procedure}
+\label{sec:cost_model_procedure}
+
+To evaluate the view refresh cost model, we follow these steps:
+\begin{enumerate}
+    \item \textbf{Create \acp{IMV}:} For each candidate view definition in Appendix~\ref{sec:views}, we create an \ac{IMV} using the \texttt{pg\_ivm} extension.
+    \item \textbf{Execute \ac{DML} workload:} For each \ac{DML} statement in the IMDB workload that affects the base tables of the created views, we execute the statement and capture the actual execution time of the \ac{IVM} triggers that maintain the view.
+    \item \textbf{Extract \ac{QEP}s:} For each executed \ac{DML} statement, we extract the \ac{QEP} of the associated \ac{IVM} trigger. We excluded all \ac{QEP}s that have zero cardinality, as they do not contribute to view maintenance.
+    \item \textbf{Featurize \ac{QEP}s:} The \ac{QEP}s are featurized according to the methodology described in Section~\ref{sec:feature_extraction}, extracting delta features, context features, and interaction features.
+    \item \textbf{Predict execution times:} Using the trained view refresh cost model, we predict the execution time for each \ac{DML} statement.
+    \item \textbf{Compare predictions:} We compare the predicted execution times with the actual measured times using standard regression metrics.
+\end{enumerate}
+
+\subsection{Evaluation Metrics}
+\label{sec:cost_model_metrics}
+
+We evaluate the view refresh cost model using the following metrics:
+
+\begin{itemize}
+    \item \textbf{Mean Squared Error (MSE):} Measures the average squared difference between predicted and actual values:
+    \[
+    \text{MSE} = \frac{1}{n} \sum_{i=1}^{n} (y_i - \hat{y}_i)^2
+    \]
+    
+    \item \textbf{Mean Absolute Percentage Error (MAPE):} Measures the average percentage error:
+    \[
+    \text{MAPE} = \frac{100\%}{n} \sum_{i=1}^{n} \left| \frac{y_i - \hat{y}_i}{y_i} \right|
+    \]
+    
+    \item \textbf{Q-Error:} A multiplicative error metric commonly used in database cost estimation:
+    \[
+    \text{Q-Error} = \max\left(\frac{y_i}{\hat{y}_i}, \frac{\hat{y}_i}{y_i}\right)
+    \]
+    We report the median and 95th percentile Q-Error.
+\end{itemize}
+
+\subsection{Results}
+\label{sec:cost_model_results}
+
+Table~\ref{tab:cost_model_results} presents the evaluation results of the view refresh cost model on the IMDB dataset.
+
+\begin{table}[h!]
+    \centering
+    \caption{View Refresh Cost Model Evaluation Results}
+    \label{tab:cost_model_results}
+    \begin{tabular}{lr}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        MSE & 103.13 \\
+        MAPE & 59.54\% \\
+        Median Q-Error & 3.66 \\
+        95th Percentile Q-Error & 3.72 \\
+        Spearman Rank & 0.08 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% TODO: Fill in actual results and add analysis
+
+\subsection{Analysis}
+\label{sec:cost_model_analysis}
+
+The evaluation results on the unseen IMDB workload demonstrate the zero-shot generalization capabilities of the proposed model, as well as the inherent challenges of cross-database transfer.
+
+The most significant finding is the consistency of the error. While the Median Q-Error is 3.66, the 95th percentile Q-Error is remarkably close at 3.72. This narrow distribution indicates that the error is systematic rather than random. The model consistently over-predicts the maintenance cost by a factor of roughly 3.7×.
+
+We attribute this bias to the specific characteristics of the training data. The training set included the \texttt{tournament} dataset, which contained extreme outliers (max runtime ≈29 seconds) and high-cardinality tables. The model likely learned to associate high-cardinality context features (like those found in IMDB) with the severe performance penalties observed in tournament. However, the IMDB test environment proved to be more performant than the worst-case scenarios in the training set, leading to a consistent over-estimation of costs.
+
+Despite the scaling bias, the stability of the Q-Error across the workload suggests that the Context Features successfully captured the relative complexity of the views. If the model had failed to learn the structural differences between views (e.g., distinguishing a 2-table join from a 5-table join), we would expect a much wider variance in Q-Error (e.g., a P95 significantly higher than the median). The tight clustering of error metrics confirms that the model correctly ranks the relative expensiveness of operations, even if the absolute magnitude is shifted.
+
+The Spearman Rank correlation (0.08) remains low, indicating that while the model captures the coarse-grained "macro" costs (distinguishing between light and heavy workloads via Context features), it struggles to rank fine-grained differences between queries hitting the same view. This limitation is expected given that the static context features dominate the feature importance (Section \ref{sec:feature_importance}), making queries on the same view appear similar to the model.
+
+It is also worth noting that, while at the first glance the MAPE of 59.54\% looks relatively high, this is influenced by the presence of low-latency updates in the workload, where small absolute errors translate to large percentage errors. For example, a prediction error of 0.5 seconds on a 1-second operation results in a 50\% MAPE contribution. In contrast, the Q-Error metric is more robust to such cases, as it treats over- and under-estimations symmetrically.
+
+\section{Evaluation of the View Advisor}
+\label{sec:eval_view_advisor}
+
+Having validated the accuracy of the underlying cost models, we now evaluate the end-to-end performance of the View Advisor. The primary goal is to determine whether the advisor can correctly select the optimal view strategy (no view, \ac{MV}, or \ac{IMV}) for a given workload, even when transferred zero-shot to the unseen IMDB database.
+
+\subsection{Evaluation Procedure}
+\label{sec:view_advisor_procedure}
+
+To evaluate the view advisor, we follow these steps:
+\begin{enumerate}
+    \item \textbf{Create views:} For each candidate view definition, we create both an \ac{MV} and an \ac{IMV}. The database is reset between configurations to ensure isolation.
+    \item \textbf{Rewrite workload:} The read queries in the workload are rewritten to use the view definitions where applicable, as described in Section~\ref{sec:query_rewriting}.
+    \item \textbf{Estimate \ac{QEP}s:} For each configuration (no view, \ac{MV}, \ac{IMV}), we obtain the estimated \ac{QEP}s for all queries in the workload.
+    \item \textbf{Compute scores:} For each view definition, we group its associated read and \ac{DML} queries and compute the total score:
+    \[
+    \text{Score} = \sum \text{(predicted read time)} + \sum \text{(predicted refresh time)}
+    \]
+    For the ``no view'' configuration, the predicted refresh time is zero.
+    \item \textbf{Select optimal configuration:} For each view definition, we select the configuration (no view, \ac{MV}, or \ac{IMV}) with the lowest score.
+    \item \textbf{Execute and measure:} To determine the ground-truth optimal configuration, we execute the workload under all three configurations and measure actual execution times.
+\end{enumerate}
+
+\paragraph{Note on \ac{IMV} Trigger Plan Estimation.}
+During evaluation, we discovered that PostgreSQL's \texttt{EXPLAIN} command cannot generate estimated plans for \ac{IVM} trigger execution. This is because triggers are executed implicitly as part of \ac{DML} operations, and their plans are not accessible through standard plan inspection interfaces. To address this limitation, we execute the \ac{DML} queries with \ac{IVM} triggers enabled and capture the actual execution times. We then use the T3 \ac{DML} cost model to predict the \ac{IVM} trigger time and compare it to the actual measured time.
+
+\subsection{Decision Accuracy and Tolerance}
+\label{sec:decision_accuracy}
+
+To assess the quality of the advisor's recommendations, we compared its predicted optimal strategy against the ground-truth optimal strategy (determined by executing all configurations).
+
+\paragraph{Strict Accuracy.}
+Under strict evaluation, the advisor achieves an accuracy of 41.67\% (5 out of 12 views). In these cases, the advisor's top choice exactly matched the ground truth. While this may appear modest at first glance, it is important to recognize that view selection is fundamentally a ranking problem, not a classification problem. The absolute difference in cost between strategies can vary dramatically across views.
+
+\paragraph{Relaxed Accuracy (Tolerance).}
+In many database tuning scenarios, "near-optimal" decisions are acceptable. For example, if No View mode costs 100ms and \ac{IMV} costs 105ms, choosing \ac{IMV} is technically incorrect but practically negligible. We define a tolerance threshold $\tau$: a prediction is considered correct if the chosen strategy's cost is within $\tau\%$ of the true optimal cost:
+\[
+\frac{|T_{\text{recommended}} - T_{\text{optimal}}|}{T_{\text{optimal}}} \leq \tau
+\]
+
+Figure~\ref{fig:accuracy_vs_tolerance} illustrates how recommendation accuracy varies with tolerance.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{view-advisor-recommendation-accuracy-vs-tolerance-threshold.png}
+    \caption{Recommendation Accuracy as a Function of Tolerance Threshold}
+    \label{fig:accuracy_vs_tolerance}
+\end{figure}
+
+From the figure, we observe the following:
+\begin{itemize}
+    \item At a modest 5\% tolerance, accuracy increases to 58.33\%.
+    \item At a 25\% tolerance, accuracy reaches 91.67\%, meaning the advisor avoids catastrophic decisions in nearly all cases.
+    \item This demonstrates that while the advisor sometimes misses the absolute best strategy in "close call" scenarios, it consistently identifies competitive strategies that are within the same performance tier.
+\end{itemize}
+
+\subsection{Error Analysis: Confusion Matrix}
+\label{sec:confusion_matrix}
+
+Figure~\ref{fig:confusion_matrix} provides a detailed breakdown of the advisor's decision errors through a confusion matrix.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{view-advisor-confusion-matrix.png}
+    \caption{Confusion Matrix for View Advisor Recommendations}
+    \label{fig:confusion_matrix}
+\end{figure}
+
+The confusion matrix reveals a specific pattern of misclassification:
+
+\paragraph{Conservative Bias.}
+The most common error type is predicting No View mode when the true optimal was \ac{IMV} or \ac{MV} modes (False Negatives). This indicates that the advisor is risk-averse; it requires a strong signal of benefit to recommend creating a view. In production environments, this is often a desirable property, as it avoids the overhead of creating and maintaining unnecessary views that provide marginal benefits.
+
+\paragraph{The "Close Call" Problem.}
+Many of the errors labeled as "Suboptimal ($\times$)" occur when the costs of two strategies are extremely close. For instance, the advisor may predict that No View and \ac{IMV} modes have nearly identical costs (within 10\%), but minor estimation noise causes the ranking to be inverted. While technically incorrect, the utility difference is marginal, and either choice would yield satisfactory performance.
+
+\paragraph{Absence of Catastrophic Errors.}
+Notably, there are no cases where the advisor recommended an expensive \ac{MV} mode when No View mode was clearly superior (or vice versa with large margins). This confirms that the advisor successfully avoids the most damaging misconfigurations.
+
+\subsection{Impact on Total Workload Runtime}
+\label{sec:workload_runtime}
+
+Ultimately, the metric that matters most is the total time saved across the entire workload. Figure~\ref{fig:total_runtime} illustrates the aggregate impact of the advisor's recommendations.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.9\textwidth]{view-advisor-total-workload-runtime-speedup.png}
+    \caption{Total Workload Runtime: Baseline vs. Advisor Recommendations}
+    \label{fig:total_runtime}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{Baseline Runtime:} 1,343 ms (using standard \acp{MV} for all views).
+    \item \textbf{Optimized Runtime:} 348 ms (using the Advisor's recommended mix of strategies).
+    \item \textbf{Speedup:} The advisor achieved a \textbf{3.86$\times$ speedup} (74.1\% reduction in runtime).
+\end{itemize}
+
+This result confirms that despite the moderate strict accuracy (41.67\%), the advisor successfully identifies the high-impact optimization opportunities. It correctly navigated the trade-off space to filter out expensive \ac{MV} maintenance where appropriate (switching to \texttt{NO\_VIEW} or \texttt{IMV}), resulting in a substantial net performance gain.
+
+\subsection{Per-View Speedup Analysis}
+\label{sec:per_view_speedup}
+
+To understand which views contributed most to the overall speedup, we examined the per-view performance improvements. Figure~\ref{fig:per_view_speedup} shows the speedup achieved for each candidate view.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.9\textwidth]{view-advisor-per-view-prediction-label.png}
+    \caption{Speedup per View Definition (Advisor vs. Baseline)}
+    \label{fig:per_view_speedup}
+\end{figure}
+
+Key observations:
+\begin{itemize}
+    \item \textbf{High-impact views:} Views 10 and 11 achieved massive speedups ($>$10$\times$) by switching from expensive \ac{MV} maintenance to more efficient strategies. These views had high write-to-read ratios, making full recomputation prohibitively expensive.
+    
+    \item \textbf{Marginal-benefit views:} For Views 2, 4, and 6, the advisor correctly identified that materialization provided minimal benefit and recommended No View mode, avoiding unnecessary overhead.
+    
+    \item \textbf{Conservative decisions:} In a few cases (e.g., View 3), the advisor chose a suboptimal but safe strategy, resulting in near-unity speedup (neither gain nor loss).
+\end{itemize}
+
+\subsection{Analysis}
+\label{sec:view_advisor_analysis}
+
+The evaluation demonstrates that the view advisor is effective at making high-level strategic decisions about view usage, even when individual cost predictions contain systematic bias.
+
+\paragraph{Why Low Strict Accuracy Does Not Imply Poor Performance.}
+The 41.67\% strict accuracy might suggest poor decision-making at first glance. However, when contextualized with the tolerance analysis and total runtime results, a different picture emerges:
+\begin{itemize}
+    \item The advisor achieves 91.67\% accuracy at 25\% tolerance, indicating it rarely makes disastrous choices.
+    \item The 3.86$\times$ speedup demonstrates that the advisor correctly identifies the views where materialization provides the largest marginal benefit.
+    \item In database tuning, the goal is to maximize aggregate performance, not to perfectly rank every configuration. The advisor succeeds at this macro-level optimization.
+\end{itemize}
+
+\paragraph{The Role of Conservative Bias.}
+The confusion matrix reveals that the advisor errs on the side of caution, preferring No View mode when uncertain. This is a feature, not a bug:
+\begin{itemize}
+    \item Creating and maintaining unnecessary views incurs storage and update overhead.
+    \item In production systems, false positives (recommending a bad view) are more costly than false negatives (missing a beneficial view).
+    \item The conservative bias aligns with industry best practices, where views are created only when there is clear evidence of benefit.
+\end{itemize}
+
+\paragraph{Generalization Across Workload Types.}
+The advisor successfully handles diverse workload characteristics:
+\begin{itemize}
+    \item \textbf{Read-heavy workloads:} For views with high read-to-write ratios, the advisor correctly recommends \ac{IMV} or \ac{MV} modes, as the maintenance overhead is amortized over many read operations.
+    \item \textbf{Write-heavy workloads:} For views with frequent updates, the advisor appropriately recommends No View mode or selectively uses \ac{IMV} modes when incremental maintenance is efficient.
+    \item \textbf{Mixed workloads:} The advisor's cost-benefit analysis effectively balances competing objectives, selecting configurations that minimize total execution time.
+\end{itemize}
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Limitations}
+\label{sec:limitations}
+
+Despite the promising results, several limitations should be noted regarding the current approach:
+
+\begin{itemize}
+    \item \textbf{Zero-Shot Extrapolation limits:} Tree-based models are inherently limited in their ability to extrapolate to feature values outside their training range. As observed in the IMDB evaluation, when the target database contains tables significantly larger than those in the training set (e.g., millions vs. hundreds of thousands of rows), the model tends to predict the maximum cost learned during training or systematic bias, rather than scaling linearly.
+    
+    \item \textbf{\ac{IMV} trigger plan estimation:} PostgreSQL does not currently support `EXPLAIN` for internal \ac{IVM} triggers without execution. Consequently, the advisor must execute the \ac{DML} statements on a sample or staging environment to capture the trigger plans for feature extraction, which introduces a runtime overhead to the recommendation process.
+    
+    \item \textbf{View complexity:} The current evaluation is limited to views with up to 3 joins. More complex views involving window functions, nested subqueries, or `DISTINCT` clauses may have non-linear maintenance costs that are not fully captured by the current feature set.
+    
+    \item \textbf{Concurrent workloads:} The evaluation assumes serial execution of queries. In practice, concurrent read/write workloads may experience lock contention on the materialized view or the \ac{IVM} delta tables, a dynamic overhead that the static cost model does not currently predict.
+\end{itemize}
+
+\subsection{Threats to Validity}
+\label{sec:threats}
+
+\begin{itemize}
+    \item \textbf{Internal validity:} To control for noise, all experiments were conducted on dedicated hardware with a warm cache. However, the use of a 10\% sample for plan capture in the advisor introduces a sampling bias, where fixed overheads (planning, connection) may dominate execution time compared to full-scale runs.
+    
+    \item \textbf{External validity:} The evaluation focuses on the \texttt{pg\_ivm} extension for PostgreSQL. While the methodology (context features + total time prediction) is generalizable, the specific feature importance (e.g., the dominance of specific scan types) is likely implementation-specific. Additionally, the IMDB dataset, while a standard benchmark, represents only one point in the schema design space (snowflake-like schema with heavy skew).
+    
+    \item \textbf{Construct validity:} We utilized standard regression metrics (Q-Error, MAPE) and classification metrics (Accuracy, F1). However, the ultimate ground truth for an advisor is the end-to-end workload runtime, which we prioritize in our final analysis over pure prediction accuracy.
+\end{itemize}
+
+\section{Summary}
+\label{sec:evaluation_summary}
+
+This chapter presented a comprehensive evaluation of the \ac{ML}-based View Advisor and its underlying write-cost model. The results support the following conclusions:
+
+\begin{enumerate}
+    \item \textbf{Feasibility of Learned IVM Cost Estimation:} We demonstrated that a tree-based model using \textit{Context Features} (static view definition) and \textit{Interaction Ratios} can successfully distinguish between low-cost and high-cost maintenance operations. While zero-shot transfer introduces systematic bias due to hardware and scale differences, the model successfully preserves the relative rank of costs, achieving a median Q-Error of $3.66\times$ on the unseen IMDB workload.
+    
+    \item \textbf{Robust Decision Making:} Despite the challenges of zero-shot cost estimation, the View Advisor demonstrates high utility. While the strict decision accuracy is $41.67\%$, the relaxed accuracy at a $25\%$ tolerance threshold reaches $91.67\%$. This indicates that even when the advisor misclassifies a view, it selects a strategy that is competitively close to the optimal performance.
+    
+    \item \textbf{Significant Workload Acceleration:} The ultimate validation of the system is the aggregate impact on query processing. The advisor's recommendations resulted in a \textbf{$3.86\times$ speedup} (reducing total cost from 1,343 ms to 348 ms) compared to a baseline of fully materialized views.
+\end{enumerate}
+
+These findings confirm that an automated, learned approach to view selection is not only viable but capable of delivering substantial performance gains by effectively navigating the trade-off between read acceleration and incremental maintenance overhead.

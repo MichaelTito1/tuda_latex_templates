@@ -44,7 +44,7 @@ The main workload used for training and evaluation, referred to as \texttt{workl
 \label{sec:hardware_specs}
 All workloads were executed on a machine with the type \texttt{c8220}. The key hardware and software specifications for this node are detailed in Table~\ref{tab:hardware_specs}.
 
-\begin{table}[h!]
+\begin{table}[H]
   \centering
   \caption{Hardware and OS Specifications}
   \label{tab:hardware_specs}
@@ -68,99 +68,99 @@ All workloads were executed on a machine with the type \texttt{c8220}. The key h
 
 % ADD the view queries used for IMDB workload evaluation
 \section{IMDB Candidate View Definitions}
-\label{sec:appendix_queries}
+\label{sec:views}
 
 The following SQL queries were used to define the views for the evaluation of the view advisor.
 
 \begin{lstlisting}[caption={Query 1: Join on Title and AKA Title with phonetic filtering}]
-SELECT "title"."id" AS "title_id", "aka_title"."id" AS "aka_title_id", "title"."kind_id", "aka_title"."movie_id", "title"."production_year", "aka_title"."title" AS "aka_title", "aka_title"."note" AS "aka_note" 
+SELECT "title"."id" AS "title\_id", "aka\_title"."id" AS "aka\_title\_id", "title"."kind\_id", "aka\_title"."movie\_id", "title"."production\_year", "aka\_title"."title" AS "aka\_title", "aka\_title"."note" AS "aka\_note" 
 FROM "title" 
-JOIN "aka_title" ON "title"."id" = "aka_title"."movie_id" 
-WHERE "aka_title"."movie_id" = "title"."id" 
-AND "aka_title"."phonetic_code" BETWEEN 'A1652' AND 'Z6564' 
+JOIN "aka\_title" ON "title"."id" = "aka\_title"."movie\_id" 
+WHERE "aka\_title"."movie\_id" = "title"."id" 
+AND "aka\_title"."phonetic\_code" BETWEEN 'A1652' AND 'Z6564' 
 AND "title"."title" BETWEEN '(#1.10964)' AND 'üç';
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 2: Movie Companies and Types}]
-SELECT "movie_companies"."id", "movie_companies"."company_id", "movie_companies"."movie_id", "movie_companies"."note", "company_type"."kind" 
-FROM "movie_companies" 
-JOIN "company_type" ON "movie_companies"."company_type_id" = "company_type"."id" 
-WHERE "company_type"."kind" BETWEEN 'distributors' AND 'special effects companies' 
-AND "movie_companies"."note" BETWEEN '(1911) (USA) (theatrical)' AND 'co-production)';
+SELECT "movie\_companies"."id", "movie\_companies"."company\_id", "movie\_companies"."movie\_id", "movie\_companies"."note", "company\_type"."kind" 
+FROM "movie\_companies" 
+JOIN "company\_type" ON "movie\_companies"."company\_type\_id" = "company\_type"."id" 
+WHERE "company\_type"."kind" BETWEEN 'distributors' AND 'special effects companies' 
+AND "movie\_companies"."note" BETWEEN '(1911) (USA) (theatrical)' AND 'co-production)';
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 3: Title, Info Index, and Keywords}]
-SELECT "title"."id", "title"."season_nr", "title"."episode_of_id", "title"."phonetic_code", "title"."episode_nr", "title"."production_year", "movie_info_idx"."info", "movie_keyword"."keyword_id" 
+SELECT "title"."id", "title"."season\_nr", "title"."episode\_of\_id", "title"."phonetic\_code", "title"."episode\_nr", "title"."production\_year", "movie\_info\_idx"."info", "movie\_keyword"."keyword\_id" 
 FROM "title" 
-JOIN "movie_info_idx" ON "title"."id" = "movie_info_idx"."movie_id" 
-JOIN "movie_keyword" ON "title"."id" = "movie_keyword"."movie_id" 
-WHERE "title"."production_year" BETWEEN 1900 AND 2025;
+JOIN "movie\_info\_idx" ON "title"."id" = "movie\_info\_idx"."movie\_id" 
+JOIN "movie\_keyword" ON "title"."id" = "movie\_keyword"."movie\_id" 
+WHERE "title"."production\_year" BETWEEN 1900 AND 2025;
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 4: Movie Info and Title Metadata}]
-SELECT "movie_info"."id" AS "movie_info_id", "movie_info"."movie_id", "movie_info"."info_type_id", "movie_info"."info", "movie_info"."note", "title"."id" AS "title_id", "title"."title", "title"."imdb_index", "title"."kind_id", "title"."production_year", "title"."imdb_id", "title"."phonetic_code", "title"."episode_of_id", "title"."season_nr", "title"."episode_nr", "title"."series_years", "title"."md5sum" 
-FROM "movie_info" 
-JOIN "title" ON "movie_info"."movie_id" = "title"."id" 
+SELECT "movie\_info"."id" AS "movie\_info\_id", "movie\_info"."movie\_id", "movie\_info"."info\_type\_id", "movie\_info"."info", "movie\_info"."note", "title"."id" AS "title\_id", "title"."title", "title"."imdb\_index", "title"."kind\_id", "title"."production\_year", "title"."imdb\_id", "title"."phonetic\_code", "title"."episode\_of\_id", "title"."season\_nr", "title"."episode\_nr", "title"."series\_years", "title"."md5sum" 
+FROM "movie\_info" 
+JOIN "title" ON "movie\_info"."movie\_id" = "title"."id" 
 WHERE "title"."md5sum" BETWEEN '0296d2b20235be36849d015e34d80f2c' AND 'fffffec1b13bc6af69f56864884364e4' 
-AND "movie_info"."note" BETWEEN 'ôtre k''ôtre' AND 'ôtre k''ôtre';
+AND "movie\_info"."note" BETWEEN 'ôtre k''ôtre' AND 'ôtre k''ôtre';
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 5: Cast Info ordering}]
-SELECT "title"."id" AS "title_id", "cast_info"."person_id", "cast_info"."person_role_id", "cast_info"."nr_order" 
+SELECT "title"."id" AS "title\_id", "cast\_info"."person\_id", "cast\_info"."person\_role\_id", "cast\_info"."nr\_order" 
 FROM "title" 
-JOIN "cast_info" ON "cast_info"."movie_id" = "title"."id" 
-WHERE "cast_info"."nr_order" BETWEEN 0 AND 100;
+JOIN "cast\_info" ON "cast\_info"."movie\_id" = "title"."id" 
+WHERE "cast\_info"."nr\_order" BETWEEN 0 AND 100;
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 6: Person Info and Name}]
-SELECT "name"."id", "name"."name", "name"."imdb_index", "name"."gender", "name"."name_pcode_nf", "name"."name_pcode_cf", "name"."surname_pcode", "name"."md5sum", "person_info"."info", "person_info"."note", "person_info"."info_type_id" 
+SELECT "name"."id", "name"."name", "name"."imdb\_index", "name"."gender", "name"."name\_pcode\_nf", "name"."name\_pcode\_cf", "name"."surname\_pcode", "name"."md5sum", "person\_info"."info", "person\_info"."note", "person\_info"."info\_type\_id" 
 FROM "name" 
-JOIN "person_info" ON "name"."id" = "person_info"."person_id" 
-WHERE "person_info"."info_type_id" BETWEEN 15 AND 39;
+JOIN "person\_info" ON "name"."id" = "person\_info"."person\_id" 
+WHERE "person\_info"."info\_type\_id" BETWEEN 15 AND 39;
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 7: Linked Movies}]
-SELECT "movie_link"."id", "movie_link"."movie_id", "movie_link"."linked_movie_id", "movie_link"."link_type_id", "link_type"."link" AS "link_type" 
-FROM "movie_link" 
-JOIN "link_type" ON "movie_link"."link_type_id" = "link_type"."id" 
-WHERE "movie_link"."linked_movie_id" BETWEEN 11104 AND 2524994;
+SELECT "movie\_link"."id", "movie\_link"."movie\_id", "movie\_link"."linked\_movie\_id", "movie\_link"."link\_type\_id", "link\_type"."link" AS "link\_type" 
+FROM "movie\_link" 
+JOIN "link\_type" ON "movie\_link"."link\_type\_id" = "link\_type"."id" 
+WHERE "movie\_link"."linked\_movie\_id" BETWEEN 11104 AND 2524994;
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 8: Name, AKA Name, and Person Info Join}]
-SELECT "name"."id" AS "name_id", "aka_name"."id" AS "aka_name_id", "person_info"."id" AS "person_info_id", "aka_name"."person_id", "person_info"."person_id" AS "person_info_person_id", "person_info"."info_type_id", "name"."gender" 
+SELECT "name"."id" AS "name\_id", "aka\_name"."id" AS "aka\_name\_id", "person\_info"."id" AS "person\_info\_id", "aka\_name"."person\_id", "person\_info"."person\_id" AS "person\_info\_person\_id", "person\_info"."info\_type\_id", "name"."gender" 
 FROM "name" 
-JOIN "aka_name" ON "name"."id" = "aka_name"."person_id" 
-JOIN "person_info" ON "name"."id" = "person_info"."person_id";
+JOIN "aka\_name" ON "name"."id" = "aka\_name"."person\_id" 
+JOIN "person\_info" ON "name"."id" = "person\_info"."person\_id";
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 9: Completed Cast Status}]
-SELECT "title"."id" AS "title_id", "complete_cast"."id" AS "complete_cast_id", "comp_cast_type"."id" AS "comp_cast_type_id", "complete_cast"."movie_id", "complete_cast"."subject_id", "complete_cast"."status_id" 
+SELECT "title"."id" AS "title\_id", "complete\_cast"."id" AS "complete\_cast\_id", "comp\_cast\_type"."id" AS "comp\_cast\_type\_id", "complete\_cast"."movie\_id", "complete\_cast"."subject\_id", "complete\_cast"."status\_id" 
 FROM "title" 
-JOIN "complete_cast" ON "title"."id" = "complete_cast"."movie_id" 
-JOIN "comp_cast_type" ON "complete_cast"."subject_id" = "comp_cast_type"."id" 
-WHERE "complete_cast"."status_id" IN (3, 4);
+JOIN "complete\_cast" ON "title"."id" = "complete\_cast"."movie\_id" 
+JOIN "comp\_cast\_type" ON "complete\_cast"."subject\_id" = "comp\_cast\_type"."id" 
+WHERE "complete\_cast"."status\_id" IN (3, 4);
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 10: Cast Info and Character Names}]
-SELECT "cast_info"."id" AS "cast_info_id", "cast_info"."movie_id", "cast_info"."person_id", "cast_info"."person_role_id", "cast_info"."nr_order", "char_name"."id" AS "char_name_id", "char_name"."name", "char_name"."imdb_index", "char_name"."imdb_id", "char_name"."name_pcode_nf", "char_name"."md5sum" 
-FROM "cast_info" 
-JOIN "char_name" ON "cast_info"."person_role_id" = "char_name"."id" 
-WHERE "char_name"."name_pcode_nf" BETWEEN 'H21' AND 'T5245';
+SELECT "cast\_info"."id" AS "cast\_info\_id", "cast\_info"."movie\_id", "cast\_info"."person\_id", "cast\_info"."person\_role\_id", "cast\_info"."nr\_order", "char\_name"."id" AS "char\_name\_id", "char\_name"."name", "char\_name"."imdb\_index", "char\_name"."imdb\_id", "char\_name"."name\_pcode\_nf", "char\_name"."md5sum" 
+FROM "cast\_info" 
+JOIN "char\_name" ON "cast\_info"."person\_role\_id" = "char\_name"."id" 
+WHERE "char\_name"."name\_pcode\_nf" BETWEEN 'H21' AND 'T5245';
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 11: Info Types and Movie Index}]
-SELECT "info_type"."info", "info_type"."id" 
-FROM "info_type" 
-JOIN "movie_info_idx" ON "info_type"."id" = "movie_info_idx"."info_type_id" 
-WHERE "info_type"."info" BETWEEN 'LD additional information' AND 'where now' 
-AND "movie_info_idx"."info" BETWEEN '.....23000' AND '10000';
+SELECT "info\_type"."info", "info\_type"."id" 
+FROM "info\_type" 
+JOIN "movie\_info\_idx" ON "info\_type"."id" = "movie\_info\_idx"."info\_type\_id" 
+WHERE "info\_type"."info" BETWEEN 'LD additional information' AND 'where now' 
+AND "movie\_info\_idx"."info" BETWEEN '.....23000' AND '10000';
 \end{lstlisting}
 
 \begin{lstlisting}[caption={Query 12: Actors and Writers}]
-SELECT "cast_info"."id", "cast_info"."movie_id", "cast_info"."person_id", "cast_info"."person_role_id", "cast_info"."nr_order", "role_type"."role" 
-FROM "cast_info" 
-JOIN "role_type" ON "cast_info"."role_id" = "role_type"."id" 
-WHERE "role_type"."role" BETWEEN 'actor' AND 'writer';
+SELECT "cast\_info"."id", "cast\_info"."movie\_id", "cast\_info"."person\_id", "cast\_info"."person\_role\_id", "cast\_info"."nr\_order", "role\_type"."role" 
+FROM "cast\_info" 
+JOIN "role\_type" ON "cast\_info"."role\_id" = "role\_type"."id" 
+WHERE "role\_type"."role" BETWEEN 'actor' AND 'writer';
 \end{lstlisting}
 
 \end{appendices}

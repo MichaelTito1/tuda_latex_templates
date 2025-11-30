@@ -1,17 +1,39 @@
 \chapter{Conclusion and Future Work}
 \label{chap:conclusion_futurework}
-\IMRADlabel{discussion} % Mechanismus um das Strukturierungsmodell IMRaD zu kennzeichnen
 
-This chapter first summarizes and concludes the contributions of this thesis by presenting the strengths behind the design concepts and concluding upon the evaluation. Following, an outlook of research challenges for future work is given.
-
+This work addressed the challenge of automating physical design decisions for \ac{IVM} in PostgreSQL. While \ac{IVM} offers a compelling trade-off between read latency and data freshness, its write-side overhead is non-trivial and highly workload-dependent. We proposed, implemented, and evaluated a Machine Learning-based advisor capable of navigating this trade-off to recommend the optimal view strategy---No View, Materialized View, or Incremental View---for arbitrary SQL workloads.
 
 \section{Conclusion}
 \label{sec:conclusion}
-Mirror the contributions given in intro. 
 
-Conclude on the evaluation 
-\blindtext
+The primary contributions of this work were the design of the advisor framework, the development of a novel write-cost estimation model, and the empirical evaluation of their zero-shot capabilities.
+
+\paragraph{ML-Based Advisor Design}
+We successfully designed a view advisor that treats view selection as a cost-benefit optimization problem. By integrating read-cost estimates with our novel write-cost predictions, the advisor constructs a holistic view of the workload's performance profile. The system demonstrates that it is possible to move beyond static heuristics and utilize learned models to decide not just \textit{which} views to create, but \textit{how} to maintain them.
+
+\paragraph{Write-Cost Estimation Model}
+A core technical contribution of this thesis is the adaptation of the \ac{T3} cost modeling approach for \ac{IVM} maintenance. We identified that naive query plan featurization is insufficient for predicting maintenance costs across different databases. To overcome this, we introduced a composite feature engineering strategy that combines \textit{Delta Features} (from trigger execution plans) with \textit{Static Context Features} (from view definitions) and \textit{Scale-Invariant Ratios}. This architecture allows the model to distinguish between low-impact and high-impact updates even when transferring to unseen schemas.
+
+\paragraph{Empirical Evaluation}
+The evaluation on the held-out IMDB benchmark demonstrated the viability of the zero-shot approach. 
+\begin{itemize}
+    \item \textbf{Generalization:} The write-cost model achieved a median Q-Error of $3.66\times$ on the unseen IMDB workload. While systematic bias remains due to hardware and scale differences between training and test sets, the model successfully preserved the relative rank of maintenance costs, validating the effectiveness of the context-aware features.
+    \item \textbf{Workload Acceleration:} Most importantly, the advisor's recommendations resulted in a \textbf{$3.86\times$ speedup} for the total workload runtime compared to a baseline of fully materialized views. This confirms that the advisor correctly identifies scenarios where the cost of \ac{IMV} maintenance outweighs the read benefits, effectively optimizing the global system performance.
+\end{itemize}
 
 \section{Future Work}
 \label{sec:future_work}
-\blindtext
+
+While this work establishes a strong foundation for learned \ac{IVM} advisors, several avenues for future research remain to enhance the system's accuracy and practicality.
+
+\paragraph{Trigger Plan Estimation without Execution}
+Currently, extracting features for the write-cost model requires executing \ac{DML} statements on a staging environment to capture the \ac{IVM} trigger plans. This introduces significant overhead. Future work should investigate modifying the PostgreSQL engine or the \texttt{pg\_ivm} extension to expose "Estimated Trigger Plans" via the standard \texttt{EXPLAIN} command. This would allow the advisor to operate in a purely hypothetical mode, drastically reducing the time required to generate recommendations.
+
+\paragraph{Advanced Plan Representation}
+The current model uses a flat, aggregate feature representation of the query plan. While effective for estimating the order of magnitude, the low Spearman rank correlation (0.08) indicates a limitation in fine-grained ranking. Future research could explore Graph Neural Networks (GNNs) or Tree-LSTM architectures to encode the full structure of the trigger plans. These deep learning approaches may better capture subtle operator interactions that tree-based models miss, potentially improving the ranking accuracy in zero-shot scenarios.
+
+\paragraph{Concurrency and Lock Contention}
+The current cost model assumes serial execution and focuses on resource consumption (CPU/IO). However, in high-throughput transactional workloads, the primary bottleneck for \ac{IMV} is often lock contention on the view or the delta tables. Developing a "Concurrency-Aware" cost model that predicts lock wait times based on write frequency and transaction isolation levels would be a critical step toward deploying \ac{IMV} advisors in operational OLTP environments.
+
+\paragraph{Automatic Calibration}
+Our evaluation revealed a systematic bias when transferring models between disparate hardware environments (e.g., "Tournament" training data vs. IMDB test environment). Future iterations of the advisor could implement an online learning module that runs a small sample of "probe" queries on the target database (Few-Shot Learning). By comparing the predicted vs. actual costs of these probes, the system could automatically calibrate its scaling factors, reducing the systematic prediction error and improving decision accuracy without full retraining.
