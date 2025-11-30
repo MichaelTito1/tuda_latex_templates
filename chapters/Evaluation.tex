@@ -24,7 +24,7 @@ The evaluation workload consists of a set of \texttt{SELECT} and \ac{DML} querie
 \subsection{Candidate View Definitions}
 \label{sec:view_definitions}
 
-We curated a set of 12 candidate view definitions specifically designed for the IMDB database. These views represent common query patterns involving joins across multiple tables such as \texttt{title}, \texttt{cast\_info}, \texttt{movie\_companies}, and \texttt{name}. The complete SQL definitions for these views are provided in Appendix~\ref{sec:views}.
+We curated a set of 12 candidate view definitions specifically designed for the IMDB database. While we acknowledge that 12 views is a small sample size for classification, these views represent common query patterns involving joins across multiple tables such as \texttt{title}, \texttt{cast\_info}, \texttt{movie\_companies}, and \texttt{name}. The complete SQL definitions for these views are provided in Appendix~\ref{sec:views}.
 
 The candidate views vary in complexity:
 \begin{itemize}
@@ -82,7 +82,7 @@ The results validate our hypothesis that accurate IVM cost estimation requires a
 To evaluate the view refresh cost model, we follow these steps:
 \begin{enumerate}
     \item \textbf{Create \acp{IMV}:} For each candidate view definition in Appendix~\ref{sec:views}, we create an \ac{IMV} using the \texttt{pg\_ivm} extension.
-    \item \textbf{Execute \ac{DML} workload:} For each \ac{DML} statement in the IMDB workload that affects the base tables of the created views, we execute the statement and capture the actual execution time of the \ac{IVM} triggers that maintain the view.
+    \item \textbf{Execute \ac{DML} workload:} For each \ac{DML} statement in the IMDB workload that affects the base tables of the created views, we executed the statement and capture the actual execution time of the \ac{IVM} triggers that maintain the view.
     \item \textbf{Extract \ac{QEP}s:} For each executed \ac{DML} statement, we extract the \ac{QEP} of the associated \ac{IVM} trigger. We excluded all \ac{QEP}s that have zero cardinality, as they do not contribute to view maintenance.
     \item \textbf{Featurize \ac{QEP}s:} The \ac{QEP}s are featurized according to the methodology described in Section~\ref{sec:feature_extraction}, extracting delta features, context features, and interaction features.
     \item \textbf{Predict execution times:} Using the trained view refresh cost model, we predict the execution time for each \ac{DML} statement.
@@ -141,7 +141,7 @@ Table~\ref{tab:cost_model_results} presents the evaluation results of the view r
 
 The evaluation results on the unseen IMDB workload demonstrate the zero-shot generalization capabilities of the proposed model, as well as the inherent challenges of cross-database transfer.
 
-The most significant finding is the consistency of the error. While the Median Q-Error is 3.66, the 95th percentile Q-Error is remarkably close at 3.72. This narrow distribution indicates that the error is systematic rather than random. The model consistently over-predicts the maintenance cost by a factor of roughly 3.7×.
+The most significant finding is the consistency of the error. While the Median Q-Error is 3.66, the 95th percentile Q-Error is remarkably close at 3.72. This narrow distribution indicates that the error is systematic rather than random. The model consistently over-predicts the maintenance cost by a factor of roughly 3.7×. Due to this bias, we propose that a few-shot calibration step (by running a few probe queries on the target database and observing the hardware scaling factor) could significantly improve absolute accuracy in future work.
 
 We attribute this bias to the specific characteristics of the training data. The training set included the \texttt{tournament} dataset, which contained extreme outliers (max runtime ≈29 seconds) and high-cardinality tables. The model likely learned to associate high-cardinality context features (like those found in IMDB) with the severe performance penalties observed in tournament. However, the IMDB test environment proved to be more performant than the worst-case scenarios in the training set, leading to a consistent over-estimation of costs.
 
@@ -170,11 +170,31 @@ To evaluate the view advisor, we follow these steps:
     \]
     For the ``no view'' configuration, the predicted refresh time is zero.
     \item \textbf{Select optimal configuration:} For each view definition, we select the configuration (no view, \ac{MV}, or \ac{IMV}) with the lowest score.
-    \item \textbf{Execute and measure:} To determine the ground-truth optimal configuration, we execute the workload under all three configurations and measure actual execution times.
+    \item \textbf{Execute and measure:} To determine the ground-truth optimal configuration, we executed the workload under all three configurations and measure actual execution times.
 \end{enumerate}
 
 \paragraph{Note on \ac{IMV} Trigger Plan Estimation.}
-During evaluation, we discovered that PostgreSQL's \texttt{EXPLAIN} command cannot generate estimated plans for \ac{IVM} trigger execution. This is because triggers are executed implicitly as part of \ac{DML} operations, and their plans are not accessible through standard plan inspection interfaces. To address this limitation, we execute the \ac{DML} queries with \ac{IVM} triggers enabled and capture the actual execution times. We then use the T3 \ac{DML} cost model to predict the \ac{IVM} trigger time and compare it to the actual measured time.
+During evaluation, we discovered that PostgreSQL's \texttt{EXPLAIN} command cannot generate estimated plans for \ac{IVM} trigger execution. This is because triggers are executed implicitly as part of \ac{DML} operations, and their plans are not accessible through standard plan inspection interfaces. To address this limitation, we executed the \ac{DML} queries with \ac{IVM} triggers enabled and capture the actual execution times. We then use the T3 \ac{DML} cost model to predict the \ac{IVM} trigger time and compare it to the actual measured time.
+
+\subsection{Impact on Total Workload Runtime}
+\label{sec:workload_runtime}
+
+Since the ultimate goal of the view advisor is ranking and risk avoidance rather than pure classification, the metric that matters most is the total time saved across the entire workload. Figure~\ref{fig:total_runtime} illustrates the aggregate impact of the advisor's recommendations.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.9\textwidth]{view-advisor-total-workload-runtime-speedup.png}
+    \caption{Total Workload Runtime: Baseline vs. Advisor Recommendations}
+    \label{fig:total_runtime}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{Baseline Runtime:} 1,343 ms (using standard \acp{MV} for all views).
+    \item \textbf{Optimized Runtime:} 348 ms (using the Advisor's recommended mix of strategies).
+    \item \textbf{Speedup:} The advisor achieved a \textbf{3.86$\times$ speedup} (74.1\% reduction in runtime).
+\end{itemize}
+
+This result confirms that the advisor successfully identifies the high-impact optimization opportunities. It correctly navigated the trade-off space to filter out expensive \ac{MV} maintenance where appropriate (switching to No View mode or \ac{IMV}), resulting in a substantial net performance gain.
 
 \subsection{Decision Accuracy and Tolerance}
 \label{sec:decision_accuracy}
@@ -221,33 +241,13 @@ Figure~\ref{fig:confusion_matrix} provides a detailed breakdown of the advisor's
 The confusion matrix reveals a specific pattern of misclassification:
 
 \paragraph{Conservative Bias.}
-The most common error type is predicting No View mode when the true optimal was \ac{IMV} or \ac{MV} modes (False Negatives). This indicates that the advisor is risk-averse; it requires a strong signal of benefit to recommend creating a view. In production environments, this is often a desirable property, as it avoids the overhead of creating and maintaining unnecessary views that provide marginal benefits.
+The most common error type is predicting No View mode when the true optimal was \ac{IMV} or \ac{MV} modes (False Negatives). This indicates that the advisor exhibits risk-averse behaviour, as it requires a strong signal of benefit to recommend creating a view. In production environments, this is often a desirable property, as it avoids the overhead of creating and maintaining unnecessary views that provide marginal benefits.
 
 \paragraph{The "Close Call" Problem.}
 Many of the errors labeled as "Suboptimal ($\times$)" occur when the costs of two strategies are extremely close. For instance, the advisor may predict that No View and \ac{IMV} modes have nearly identical costs (within 10\%), but minor estimation noise causes the ranking to be inverted. While technically incorrect, the utility difference is marginal, and either choice would yield satisfactory performance.
 
 \paragraph{Absence of Catastrophic Errors.}
 Notably, there are no cases where the advisor recommended an expensive \ac{MV} mode when No View mode was clearly superior (or vice versa with large margins). This confirms that the advisor successfully avoids the most damaging misconfigurations.
-
-\subsection{Impact on Total Workload Runtime}
-\label{sec:workload_runtime}
-
-Ultimately, the metric that matters most is the total time saved across the entire workload. Figure~\ref{fig:total_runtime} illustrates the aggregate impact of the advisor's recommendations.
-
-\begin{figure}[h!]
-    \centering
-    \includegraphics[width=0.9\textwidth]{view-advisor-total-workload-runtime-speedup.png}
-    \caption{Total Workload Runtime: Baseline vs. Advisor Recommendations}
-    \label{fig:total_runtime}
-\end{figure}
-
-\begin{itemize}
-    \item \textbf{Baseline Runtime:} 1,343 ms (using standard \acp{MV} for all views).
-    \item \textbf{Optimized Runtime:} 348 ms (using the Advisor's recommended mix of strategies).
-    \item \textbf{Speedup:} The advisor achieved a \textbf{3.86$\times$ speedup} (74.1\% reduction in runtime).
-\end{itemize}
-
-This result confirms that despite the moderate strict accuracy (41.67\%), the advisor successfully identifies the high-impact optimization opportunities. It correctly navigated the trade-off space to filter out expensive \ac{MV} maintenance where appropriate (switching to \texttt{NO\_VIEW} or \texttt{IMV}), resulting in a substantial net performance gain.
 
 \subsection{Per-View Speedup Analysis}
 \label{sec:per_view_speedup}
@@ -263,7 +263,7 @@ To understand which views contributed most to the overall speedup, we examined t
 
 Key observations:
 \begin{itemize}
-    \item \textbf{High-impact views:} Views 10 and 11 achieved massive speedups ($>$10$\times$) by switching from expensive \ac{MV} maintenance to more efficient strategies. These views had high write-to-read ratios, making full recomputation prohibitively expensive.
+    \item \textbf{High-impact views:} Views 10 and 11 achieved massive speedups ($>$10$\times$) by switching from expensive \ac{MV} maintenance to more efficient strategies. These views had high write-to-read ratios, making full recomputation prohibitively expensive. This massive speedup alone accounts for a significant portion of the overall workload improvement. This indicates that, instead of perfectly ranking all configurations--including the configurations with incremental speedups--, the advisor effectively identifies the views where materialization provides the largest marginal benefit.
     
     \item \textbf{Marginal-benefit views:} For Views 2, 4, and 6, the advisor correctly identified that materialization provided minimal benefit and recommended No View mode, avoiding unnecessary overhead.
     
@@ -298,6 +298,8 @@ The advisor successfully handles diverse workload characteristics:
     \item \textbf{Write-heavy workloads:} For views with frequent updates, the advisor appropriately recommends No View mode or selectively uses \ac{IMV} modes when incremental maintenance is efficient.
     \item \textbf{Mixed workloads:} The advisor's cost-benefit analysis effectively balances competing objectives, selecting configurations that minimize total execution time.
 \end{itemize}
+
+The systematic over-estimation of maintenance costs essentially acts as a high confidence threshold, as the advisor only recommends a materialized view mode when the read-side benefit is overwhelming, ensuring that resources are not wasted on marginal candidates.
 
 \section{Discussion}
 \label{sec:discussion}

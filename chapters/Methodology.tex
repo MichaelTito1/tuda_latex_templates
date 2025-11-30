@@ -10,9 +10,9 @@ The foundation of the \ac{ML} advisor is a labeled dataset of query execution ti
 
 \subsection{Dataset and Workload Generation}
 \label{sec:dataset_generation}
-To build a robust model, we require a diverse set of training and evaluation workloads. We generate synthetic workloads that mimic the characteristics of real-world scenarios, such as the query distributions and read/write mixes found in datasets like the Amazon Redshift workload \cite{gupta2015amazon}.
+To build a robust model, a diverse set of training and evaluation workloads is required. We generated synthetic workloads that mimic the characteristics of real-world scenarios, such as the query distributions and read/write mixes found in datasets like the Amazon Redshift workload \cite{gupta2015amazon}.
 
-The data generation involves generating synthetic \texttt{SELECT} queries (read workload) using the parameters in Table~\ref{tab:workload_params}. Additionally, we generate synthetic \ac{DML} statements (write workload) from a curated month-long snippet of the Amazon Redshift dataset using Stemmer's workload generator \cite{Stemmer2025}. Both synthetic workloads' statements are verified syntactically. The workloads are also normalized by cleaning any database sharding suffixes in table names. Following that, we generate matches between the the cleaned read and write workloads. The generated matches are divided into tiny workloads (also called "experiments") that consist of one SELECT statement and its corresponding \ac{DML} queries. The structure of a single experiment is illustrated in Figure~\ref{fig:experiment_diagram}, while the overall workload structure is shown in Figure~\ref{fig:workload_diagram}. 
+The data generation involves generating synthetic \texttt{SELECT} queries (read workload) using the parameters in Table~\ref{tab:workload_params}. Additionally, we generated synthetic \ac{DML} statements (write workload) from a curated month-long snippet of the Amazon Redshift dataset using Stemmer's workload generator \cite{Stemmer2025}. Both synthetic workloads' statements are verified syntactically. The workloads are also normalized by cleaning any database sharding suffixes in table names. Following that, we generated matches between the cleaned read and write workloads. The generated matches are divided into tiny workloads (also called "experiments") that consist of one SELECT statement and its corresponding \ac{DML} queries. The structure of a single experiment is illustrated in Figure~\ref{fig:experiment_diagram}, while the overall workload structure is shown in Figure~\ref{fig:workload_diagram}. 
 
 % single experiment diagram
 \begin{figure}[h]
@@ -34,13 +34,13 @@ The matching between SELECT and \ac{DML} queries is based on common base tables 
 
 \subsection{Experiment Data Collection}
 \label{sec:data_collection}
-For each defined "experiment" workload, we execute the workload on the target database system under controlled conditions. This instrumentation is critical for capturing the ground-truth performance data.
+For each defined "experiment" workload, we executed the workload on the target database system under controlled conditions. This instrumentation is critical for capturing the ground-truth performance data.
 
 Preparing the execution environment involves loading the schema and data, the creation of necessary indexes and loading of the necessary extensions--most importantly, the \texttt{pg\_ivm} extension for \ac{IMV} support. Staging tables are used to restore the database state between experiments to ensure consistency. The base tables are loaded as a 10\% sample of the staging tables before each experiment execution. This is to ensure that the \ac{DML} queries have data to operate on while avoiding conflicts with existing table rows. To avoid any cold start scenarios, the database is warmed up before execution. Each experiment is executed only in the \ac{IMV} configuration to capture the relevant performance metrics for both reads and writes.
 
 Each experiment execution consists of the following steps:
 \begin{enumerate}
-    \item \textbf{Create the \ac{IMV} for the read query:} For the read query in the experiment, we create an \ac{IMV}. This sets up the necessary triggers and structures for incremental maintenance.
+    \item \textbf{Create the \ac{IMV} for the read query:} For the read query in the experiment, we created an \ac{IMV}. This sets up the necessary triggers and structures for incremental maintenance.
     \item \textbf{Execute write queries and measure execution time:} Each \ac{DML} query in the experiment is executed, and its execution time is measured. This captures the "trigger time overhead," which is the \emph{view maintenance cost} incurred by the \ac{IMV} triggers during writes.
 \end{enumerate}
 
@@ -52,22 +52,29 @@ Note that the obtained trigger execution times only measure the "wall clock" tim
 \label{sec:feature_extraction}
 Once the raw performance data is collected, the next step is to parse the \ac{QEP}s into numerical feature vectors. While the read-cost model utilizes the standard pipeline-centric feature extraction of the \ac{T3} system \cite{rieger2025t3}, the view refresh cost model requires a specialized approach to capture the overhead of \ac{IVM}.
 
-For the view refresh cost model, we extract a composite feature vector that combines two distinct sources of information:
+Standard query cost models typically predict execution time based solely on the operations within the specific plan. However, for \ac{IVM} triggers, the cost is not just a function of the \textit{operation} (the delta), but also of the \textit{container} (the view size). A small update on a large view behaves differently than a small update on a small view. To capture this, we extracted a composite feature vector that combines three distinct sources of signal:
+
 \begin{itemize}
-    \item \textbf{Delta Features:} Extracted from the \ac{IVM} trigger maintenance plans, characterizing the volume of changes (e.g., number of rows inserted/deleted, trigger execution cost).
-    \item \textbf{Context Features:} Extracted from the view definition's \ac{QEP}, characterizing the static complexity of the view (e.g., total cardinality, number of joins, total operators).
-    \item \textbf{Interaction Features:} Scale-invariant ratios (e.g., $\frac{\text{delta rows}}{\text{view cardinality}}$) that model the relative change and allow the model to generalize across databases of varying sizes.
+    \item \textbf{Delta Features:} These features are extracted from the \ac{IVM} trigger execution plans (specifically the delta calculation and application steps). They characterize the dynamic volume of changes introduced by the \ac{DML} statement. Key features include the estimated cost of the trigger logic (\texttt{delta\_total\_est\_cost}), the number of rows being propagated (\texttt{delta\_total\_est\_card}), and the count of specific operators like aggregations or scans within the trigger.
+    
+    \item \textbf{Context Features:} These features are extracted from the definition of the view itself (the original `SELECT` statement that created the view). They capture the static complexity and scale of the data structure being modified. Crucially, this includes \texttt{context\_total\_est\_card} (the total cardinality of the view), \texttt{context\_max\_depth} (the depth of the view's join tree), and the total number of operators. These features provide the necessary "state" information, allowing the model to distinguish between a low-cardinality update on a small lookup table versus a low-cardinality update on a billion-row aggregate view.
+    
+    \item \textbf{Interaction Features:} To enable zero-shot generalization across databases of vastly different sizes (e.g., training on the \texttt{tournament} database vs. testing on the \texttt{IMDB} database from Amazon Redshift), we engineered scale-invariant interaction ratios. The most critical feature is the \textit{Impact Ratio}, which measures the relative magnitude of the update:
+    \[
+    \text{Impact Ratio} = \frac{\text{Delta Rows}}{\text{View Cardinality} + 1}
+    \]
+    We added 1 to the denominator to avoid division by zero in case of zero-cardinality views. By explicitly exposing these ratios (along with others such as \texttt{context\_scan\_ratio} and \texttt{cost\_density}), we prevented the tree-based model from overfitting to the specific absolute cardinalities seen during training, allowing it to extrapolate better to unseen schemas.
 \end{itemize}
 
-Prior to training, a featurized dataset is constructed by combining these feature vectors with their corresponding measured execution times. Outliers are clipped, and rows with zero execution time (indicating no actual maintenance work) are filtered out to ensure the model learns the true cost of maintenance.
+Prior to training, a featurized dataset is constructed by combining these composite vectors with their corresponding measured execution times. Data points where no \ac{IVM} trigger fired (resulting in zero execution time) are filtered out to ensure the model focuses exclusively on learning the cost of actual maintenance work.
 
 \section{Model Training}
 \label{sec:model_training}
-With the featurized dataset, we can train the cost models. While a pre-existing read-cost model is reused, the development of a novel \emph{view refresh cost model} to predict the \ac{IMV} maintenance overhead, which is an integral part of the view advisor.
+With the featurized dataset, we trained the cost models. While a pre-existing read-cost model is reused, the development of a novel \emph{view refresh cost model} to predict the \ac{IMV} maintenance overhead, which is an integral part of the view advisor.
 
 \subsection{Training the T3-style Cost Model}
 \label{sec:t3_training}
-We implement the view refresh cost model as a LightGBM gradient-boosted decision-tree ensemble, an approach inspired by the \ac{T3} cost model \cite{rieger2025t3}.
+We implemented the view refresh cost model as a LightGBM gradient-boosted decision-tree ensemble, an approach inspired by the \ac{T3} cost model \cite{rieger2025t3}.
 The feature vectors extracted from the parsed trigger execution plans serve as the input ($X$) for this model. More specifically, for each \ac{DML} \ac{QEP}, the model is served the following data:
 \begin{itemize}
     \item The full set of pipeline features of the view's underlying query, extracted from the \ac{QEP} of the view query itself.
@@ -77,16 +84,26 @@ The feature vectors extracted from the parsed trigger execution plans serve as t
 
 The training pipeline was adapted to handle the specific feature subset generated from these maintenance plans augmented by contextual information from the views query plans, ensuring the model learns the costs associated with incremental updates rather than general query execution.
 
-\subsection{Per-Pipeline Prediction Target}
-\label{sec:per_tuple_training}
-A key innovation of the \ac{T3} model, which we adopt, is its training objective. Instead of predicting the total execution time of an entire pipeline, the \ac{QEP} is divided into pipelines, then the model is trained to predict the \textbf{per-pipeline processing time} ($t$) for each pipeline. This per-pipeline time is defined as the total time spent processing tuples in that pipeline divided by the number of tuples processed (the pipeline's cardinality). This approach allows the model to generalize better across pipelines of varying sizes and complexities. 
+\subsection{Prediction Target and Transformation}
+\label{sec:prediction_target}
 
-Additionally, we train the model to minimize the mean squared error on the log-transformed per-pipeline times, which helps to handle the wide range of time values and focuses the model on relative error. To stabilize training across the wide dynamic range of per-pipeline times (which can be fractions of a nanosecond), we transform the target variable $t$ using a negative log transformation, as described in the \ac{T3} design:
+While we retained the pipeline-centric architecture of the original \ac{T3} model (decomposing the query plan into segments), we altered the prediction target for the view refresh cost model.
+
+The standard \ac{T3} approach predicts the \textit{per-tuple} processing time for each pipeline and calculates the total cost by multiplying this prediction by the input cardinality. We demonstrated that standard tuple-centric cost models are insufficient for maintenance workloads due to fixed overheads, necessitating a total-time prediction approach augmented by context features. Specifically, assuming a constant per-tuple cost causes predictions to explode in value when transferring from training tables (e.g., $10^5$ rows) to testing tables (e.g., $10^7$ rows), as maintenance operations often incur fixed overheads or logarithmic scaling factors that are not captured by a linear per-tuple coefficient.
+
+To address this, our model is trained to predict the \textbf{Total Execution Time} of each pipeline directly. By learning the absolute duration rather than a normalized rate, the tree model can utilize the \textit{Context Features} (Section~\ref{sec:feature_extraction}) to learn non-linear scaling laws appropriate for the database size. The final maintenance cost for a \ac{DML} operation is derived by aggregating the predicted total times of its constituent pipelines:
+
 \[
-t' = -\log(t)
+\text{Cost}_{\text{maintenance}} = \sum_{p \in \text{Pipelines}} \text{Model}(x_p)
 \]
-The model is then trained to predict this transformed value $t'$. At inference time, we reverse the transformation and multiply by the pipeline's cardinality to get the final predicted pipeline cost. This per-pipeline model is the core component that allows the advisor to estimate the \ac{IMV} maintenance cost for any given \ac{DML} statement.
 
+Furthermore, database maintenance times exhibit a heavy-tailed, Log-Normal distribution. To stabilize the gradient boosting process, we applied a \texttt{Log1p} transformation to the target variable $t$ (measured in milliseconds) of each pipeline:
+
+\[
+t' = \ln(1 + t)
+\]
+
+This transformation compresses the dynamic range of the target, preventing the model from over-fitting to extreme outliers while handling zero-cost pipelines gracefully. During training, outliers are clipped at the 99th percentile ($P_{99}$). At inference time, the model's output for each pipeline is reversed ($t = e^{t'} - 1$) before aggregation.
 
 \subsection{View Advisor Setup}
 \label{sec:view_advisor_setup}
@@ -125,6 +142,8 @@ The setup of the view advisor involves the following steps:
 \end{figure}
 
 This setup allows the advisor to make informed decisions about view usage based on predicted performance impacts, leveraging the trained view refresh cost model to accurately estimate the overhead of \ac{IMV} maintenance.
+
+Note that, due to the PostgreSQL database system's current limitations in estimating \ac{IMV}s internal triggers using \texttt{EXPLAIN}, the advisor currently operates in a "What-If" mode on a staging instance, where the actual execution times of maintenance operations are used instead of estimated costs.
 
 \section{Summary}
 \label{sec:methodology_summary}

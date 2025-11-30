@@ -38,6 +38,8 @@ The goals of this thesis are to design, implement, and evaluate an automated adv
     \item An empirical evaluation demonstrating the advisor's effectiveness at selecting strategies that balance read performance and maintenance overhead across a variety of workloads.
 \end{itemize}
 
+Note that, due to current limitations in the underlying database system's support for \ac{IMV}s, the \ac{QEP}s of internal \ac{IVM} triggers cannot be obtained using the standard \texttt{EXPLAIN} command. To circumvent this, the view-refresh-cost model is trained and evaluated using the actual execution times of maintenance operations, rather than estimated costs from query plans.
+
 \section{Thesis Outline}
 \label{sec:outline}
 The remainder of the thesis is organized as follows:

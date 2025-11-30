@@ -1,10 +1,5 @@
 \begin{abstract}
     
-\ac{MV}s are commonly used in databases to accelerate read queries, but their benefits come with high maintenance costs and full refreshes to avoid stale data. \ac{IMV}s offer an alternative by updating views incrementally through triggers. However, they perform best in read-heavy workloads and may introduce significant write-time overhead. This work proposes a machine-learning-based advisor that, given a SQL workload, predicts whether to use \ac{MV}, \ac{IMV}, or no views at all for optimal performance. The advisor jointly considers the cost of maintaining views during writes and the potential performance gains during reads. For this purpose, this work discusses the creation of a decision-tree-based cost models to predict the cost of using each view mode. Our approach aims to guide database administrators and automated tuning systems in selecting the most effective view strategy based on workload characteristics.
+\ac{MV}s are commonly used in databases to accelerate read queries, but their benefits come with high maintenance costs and full refreshes to avoid stale data. \ac{IMV}s offer an alternative by updating views incrementally through triggers, yet they introduce significant write-time overhead that varies based on workload characteristics. This work proposes a machine-learning-based advisor that, given a SQL workload, predicts whether to use \ac{MV}, \ac{IMV}, or no views at all for optimal performance. To predict the cost of view maintenance, we introduce a modified decision-tree cost model inspired by T3; unlike standard per-tuple approaches, our model utilizes context features to predict total view refresh time, allowing it to capture the non-linear overhead of maintenance triggers. While the current approach requires a staging phase to capture internal trigger plans, the resulting recommendations yield significant performance gains. Evaluation on an unseen IMDB workload demonstrates that the advisor achieves a 3.86x speedup in total workload runtime compared to a full-materialization baseline. Furthermore, while zero-shot transfer limits strict classification accuracy, the advisor achieves 91.67\% accuracy within a 25\% tolerance threshold, successfully avoiding performance degradation by filtering out expensive view configurations.
 
 \end{abstract}
-
-
-
-
-
